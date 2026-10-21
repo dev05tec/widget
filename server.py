@@ -13,49 +13,6 @@ import uvicorn
 import transcription
 
 
-# CODIGO QUE IRIA PRO SCRIPT PRA PEGAR NUMERO DA MENSAGEM
-#  //  var extra_params = {teste: "teste"};
-
-#   // (function captureWidgetPhone() {
-#   //   var originalOpen = XMLHttpRequest.prototype.open;
-#   //   var originalSend = XMLHttpRequest.prototype.send;
-
-#   //   XMLHttpRequest.prototype.open = function(method, url) {
-#   //     this.__tifluxUrl = String(url);
-#   //     return originalOpen.apply(this, arguments);
-#   //   };
-
-#   //   XMLHttpRequest.prototype.send = function(body) {
-#   //     if (
-#   //       this.__tifluxUrl &&
-#   //       this.__tifluxUrl.includes("/widget/") &&
-#   //       (this.__tifluxUrl.includes("/start") ||
-#   //         this.__tifluxUrl.includes("/message")) &&
-#   //       typeof body === "string"
-#   //     ) {
-#   //       try {
-#   //         var payload = JSON.parse(body);
-#   //         var telefone = payload.phone || payload.visitor_phone;
-
-#   //         if (telefone) {
-#   //           console.log(telefone)
-#   //           fetch("/api/telefones", {
-#   //             method: "POST",
-#   //             headers: { "Content-Type": "application/json" },
-#   //             body: JSON.stringify({ telefone: telefone }),
-#   //           }).catch(function(error) {
-#   //             console.error("Não foi possível atualizar o telefone:", error);
-#   //           });
-#   //         }
-#   //       } catch (error) {
-#   //         console.error("Não foi possível ler o telefone do widget:", error);
-#   //       }
-#   //     }
-
-#   //     return originalSend.apply(this, arguments);
-#   //   };
-#   // })();
-
 BASE_DIR = Path(__file__).parent
 DATABASE = BASE_DIR / "num.db"
 MAX_TRANSCRIPTION_BYTES = 20 * 1024 * 1024
