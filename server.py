@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import base64
 import binascii
+import os
 from pathlib import Path
 import sqlite3
 
@@ -149,4 +150,4 @@ app.mount("/", StaticFiles(directory=BASE_DIR, html=True), name="static")
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
