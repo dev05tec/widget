@@ -87,7 +87,7 @@
   <script>
     const widgetToken = "4dbbca22-ea44-4171-a4c7-23b3031a77d4";
     // Configure this to the base URL of the separately deployed Secullum IA API.
-    // Example: window.SECULLUM_IA_API_BASE_URL = "https://your-api-host";
+    // Example: window.SECULLUM_IA_API_BASE_URL = "0.0.0.0";
     const transcriptionApiBase = (window.SECULLUM_IA_API_BASE_URL || window.location.origin).replace(/\/$/, "");
     const transcriptionEndpoint = `${transcriptionApiBase}/secullum-ia/transcribe-upload`;
     const maxAudioBytes = 20 * 1024 * 1024;
