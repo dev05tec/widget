@@ -1,0 +1,527 @@
+<!-- Exemplo -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Widget</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: #fafafa;
+    }
+
+    #tiflux-widget-root {
+      visibility: hidden !important;
+    }
+
+  </style>
+</head>
+
+<body>
+  <script>
+    const widgetToken = "a65987eb-c584-4ffe-9237-a84c95852447";
+
+    window.TifluxWidgetConfig = {
+      token: widgetToken,
+      xOffset: 24,
+      yOffset: 24,
+      identify: {
+        name: "Nome do usuário",
+        email: "email@empresa.com",
+        phone: "11999990000",
+        externalId: "id-do-usuario",
+      },
+    };
+
+    localStorage.setItem(`@TifluxWidget:IsOpen:${widgetToken}`, "true");
+
+    const waitForWidget = setInterval(() => {
+      const root = document.querySelector("#tiflux-widget-root");
+
+      if (!root?.shadowRoot) return;
+
+      clearInterval(waitForWidget);
+
+      const getInternalButton = () =>
+        root.shadowRoot.querySelector("#tiflux-widget-app > button");
+
+      const syncWidget = () => {
+        const button = getInternalButton();
+        const app = root.shadowRoot.querySelector("#tiflux-widget-app");
+        const widgetPage = app?.querySelector(":scope > div");
+
+        if (button) {
+          if (button.style.visibility !== "hidden") {
+            button.style.setProperty("visibility", "hidden", "important");
+          }
+
+          if (root.style.visibility !== "visible") {
+            root.style.setProperty("visibility", "visible", "important");
+          }
+        }
+
+        if (widgetPage) {
+          root.style.setProperty("position", "fixed", "important");
+          root.style.setProperty("inset", "0", "important");
+          root.style.setProperty("width", "100vw", "important");
+          root.style.setProperty("height", "100vh", "important");
+
+          widgetPage.style.setProperty("position", "fixed", "important");
+          widgetPage.style.setProperty("top", "50%", "important");
+          widgetPage.style.setProperty("left", "50%", "important");
+          widgetPage.style.setProperty("transform", "translate(-50%, -50%)", "important");
+          widgetPage.style.setProperty("width", "min(80vw, 1400px)", "important");
+          widgetPage.style.setProperty("height", "80vh", "important");
+          widgetPage.style.setProperty("max-width", "1400px", "important");
+          widgetPage.style.setProperty("max-height", "none", "important");
+          widgetPage.style.setProperty("border-radius", "16px", "important");
+
+          widgetPage
+            .querySelectorAll('[aria-label="Recolher"], [aria-label="Fechar"]')
+            .forEach((button) => {
+              button.style.setProperty("display", "none", "important");
+            });
+        }
+      };
+
+      const observer = new MutationObserver(syncWidget);
+
+      observer.observe(root.shadowRoot, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class"],
+      });
+
+      syncWidget();
+    }, 100);
+
+    const widgetScript = document.createElement("script");
+    widgetScript.src = "https://public-assets.tiflux.com/widget/tiflux-widget.iife.js";
+    document.head.appendChild(widgetScript);
+  </script>
+  <script>
+    (() => {
+      const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+      let recorder;
+      let recordingStream;
+      let recordedChunks = [];
+      let recordedBytes = 0;
+      let pendingAudio;
+      const audioHistory = [];
+      const MIC_ICON = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"></path></svg>';
+      const STOP_ICON = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>';
+      const FILE_ICON = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.49-8.48"></path></svg>';
+      let widgetRoot;
+      let widgetShadow;
+      let widgetObserver;
+      let sendCaptureShadow;
+      let transcriptionRouteAvailable;
+      let routeCheckStarted = false;
+
+      const findEditor = () => widgetShadow?.querySelector('[contenteditable="true"]');
+      const findStatus = () => widgetShadow?.querySelector("#tiflux-transcription-status");
+
+      const setStatus = (message) => {
+        const status = findStatus();
+        if (status) {
+          status.textContent = message;
+          status.hidden = !message;
+        }
+      };
+
+      const setButtonState = (recording, busy = false) => {
+        const button = widgetShadow?.querySelector("#tiflux-record-audio");
+        if (!button) return;
+        button.disabled = busy;
+        button.innerHTML = busy ? "…" : recording ? STOP_ICON : MIC_ICON;
+        button.title = busy ? "Transcrevendo áudio…" : recording ? "Parar gravação" : "Gravar áudio";
+        button.setAttribute("aria-label", button.title);
+        button.setAttribute("aria-pressed", String(recording));
+      };
+
+      const setEditorValue = (text) => {
+        const editor = findEditor();
+        if (!editor) throw new Error("Não encontrei o campo de mensagem do widget.");
+        editor.focus();
+        editor.textContent = text;
+        editor.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: text,
+        }));
+        return editor;
+      };
+
+      const showAudioPreview = (blob, text) => {
+        const editor = findEditor();
+        const editorContainer = editor?.parentElement;
+        const composer = widgetShadow?.querySelector("#tiflux-record-audio")?.parentElement;
+        if (!editor || !editorContainer || !composer) {
+          throw new Error("Não encontrei a área de mensagem do widget.");
+        }
+
+        if (pendingAudio?.url) URL.revokeObjectURL(pendingAudio.url);
+        widgetShadow.querySelector("#tiflux-audio-preview")?.remove();
+        const url = URL.createObjectURL(blob);
+        const preview = document.createElement("div");
+        preview.id = "tiflux-audio-preview";
+        Object.assign(preview.style, {
+          display: "flex", alignItems: "center", gap: "10px", width: "100%",
+          boxSizing: "border-box", padding: "8px 10px", margin: "4px 0 8px",
+          border: "1px solid #e1e1e1", borderRadius: "10px", background: "#fff",
+        });
+
+        const label = document.createElement("span");
+        label.textContent = "Áudio gravado";
+        label.title = "O botão Enviar mensagem enviará a transcrição do áudio.";
+        Object.assign(label.style, {
+          flex: "0 0 auto", color: "#5d5d5d", font: "600 12px Arial, sans-serif",
+        });
+
+        const player = document.createElement("audio");
+        player.controls = true;
+        player.preload = "metadata";
+        player.src = url;
+        Object.assign(player.style, { flex: "1 1 auto", minWidth: "80px", maxWidth: "260px", height: "36px" });
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.textContent = "Excluir";
+        deleteButton.setAttribute("aria-label", "Excluir áudio gravado");
+        Object.assign(deleteButton.style, {
+          flex: "0 0 auto", padding: "6px 8px", border: "0", borderRadius: "6px",
+          background: "transparent", color: "#5d5d5d", font: "600 12px Arial, sans-serif",
+          cursor: "pointer",
+        });
+        deleteButton.addEventListener("click", () => {
+          if (pendingAudio?.url) URL.revokeObjectURL(pendingAudio.url);
+          pendingAudio = undefined;
+          preview.remove();
+          editorContainer.hidden = false;
+          setEditorValue("");
+          setStatus("Áudio excluído. Você pode gravar novamente ou escrever uma mensagem.");
+        });
+
+        preview.append(label, player, deleteButton);
+        composer.insertBefore(preview, editorContainer);
+        editorContainer.hidden = true;
+        pendingAudio = { blob, text, url, preview, editorContainer };
+        setStatus("");
+      };
+
+      const renderHistoryAudio = () => {
+        if (!widgetShadow) return;
+        for (const item of audioHistory) {
+          if (item.player?.isConnected) continue;
+          const candidates = [...widgetShadow.querySelectorAll("*")].filter((element) =>
+            element.childElementCount === 0 &&
+            element.textContent?.trim() === item.text &&
+            !element.isContentEditable &&
+            !element.closest("#tiflux-transcription-status, #tiflux-audio-preview, [contenteditable='true']")
+          );
+          const textNode = candidates[candidates.length - 1];
+          if (!textNode) continue;
+
+          let bubble = textNode;
+          for (let level = 0; level < 6 && bubble; level += 1) {
+            const radius = bubble instanceof HTMLElement ? getComputedStyle(bubble).borderRadius : "0px";
+            if (bubble !== textNode && radius && radius !== "0px") break;
+            bubble = bubble.parentElement;
+          }
+          if (!bubble) bubble = textNode.parentElement;
+          if (!bubble) continue;
+
+          const playerBubble = document.createElement("div");
+          playerBubble.setAttribute("role", "group");
+          playerBubble.setAttribute("aria-label", "Mensagem de áudio transcrita");
+          Object.assign(playerBubble.style, {
+            display: "flex", alignItems: "center", gap: "8px", width: "min(260px, 100%)",
+            boxSizing: "border-box", padding: "7px 9px", marginTop: "4px",
+            border: "1px solid #e1e1e1", borderRadius: "9px", background: "#fff",
+            color: "#5d5d5d", font: "13px Arial, sans-serif",
+          });
+
+          const label = document.createElement("span");
+          label.textContent = "Áudio";
+          Object.assign(label.style, { flex: "0 0 auto", color: "#5d5d5d" });
+
+          const audio = document.createElement("audio");
+          audio.src = item.url;
+          audio.controls = true;
+          audio.preload = "metadata";
+          Object.assign(audio.style, { width: "190px", height: "34px", filter: "grayscale(1)" });
+          playerBubble.append(label, audio);
+
+          textNode.hidden = true;
+          bubble.style.setProperty("background-color", "#fff", "important");
+          bubble.style.setProperty("color", "#5d5d5d", "important");
+          bubble.style.setProperty("border", "1px solid #e1e1e1", "important");
+          bubble.appendChild(playerBubble);
+          item.player = playerBubble;
+        }
+      };
+
+      const transcribeAudio = async (blob, filename) => {
+        if (!blob.size) throw new Error("O áudio está vazio.");
+        if (blob.size > MAX_AUDIO_BYTES) {
+          throw new Error("O áudio excede o limite de 20 MB e não foi enviado. Escolha um arquivo menor ou grave um trecho mais curto.");
+        }
+        const dataBase64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Não foi possível ler o áudio."));
+          reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+          reader.readAsDataURL(blob);
+        });
+        let response;
+        try {
+          response = await fetch("/api/transcription", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              data_base64: dataBase64,
+              mime_type: blob.type || "application/octet-stream",
+              filename,
+            }),
+          });
+        } catch {
+          throw new Error("Não foi possível acessar a rota de transcrição. Verifique se o servidor está ativo.");
+        }
+        let payload = {};
+        try {
+          payload = await response.json();
+        } catch {
+          // A mensagem abaixo será escolhida pelo código HTTP.
+        }
+        if (!response.ok) {
+          if (response.status === 404 || response.status === 405) {
+            throw new Error("A rota de transcrição não está disponível. Reinicie o servidor e recarregue a página.");
+          }
+          if (response.status === 413) {
+            throw new Error(payload.detail || "O áudio excede o limite de 20 MB e não foi enviado.");
+          }
+          throw new Error(payload.detail || "Falha ao transcrever. Verifique a conexão e a configuração do servidor.");
+        }
+        if (payload.text?.trim()) {
+          const message = `[Widget - Transcrição de áudio]\n\n${payload.text.trim()}`;
+          setEditorValue(message);
+          showAudioPreview(blob, message);
+        } else {
+          setStatus("Nenhuma fala foi identificada. Grave ou escolha outro áudio.");
+        }
+      };
+
+      const showRouteUnavailableNotice = () => {
+        const sendButton = widgetShadow?.querySelector('button[aria-label="Enviar mensagem"]');
+        const composer = sendButton?.parentElement;
+        if (!composer || composer.querySelector("#tiflux-transcription-unavailable")) return;
+        const notice = document.createElement("div");
+        notice.id = "tiflux-transcription-unavailable";
+        notice.setAttribute("role", "status");
+        notice.textContent = "Transcrição de áudio indisponível no momento.";
+        Object.assign(notice.style, {
+          padding: "6px 0", color: "#5d5d5d", font: "12px Arial, sans-serif",
+        });
+        const editor = findEditor()?.parentElement;
+        if (editor) composer.insertBefore(notice, editor);
+        else composer.appendChild(notice);
+      };
+
+      const setUpControls = () => {
+        if (transcriptionRouteAvailable !== true) {
+          if (transcriptionRouteAvailable === false) showRouteUnavailableNotice();
+          return false;
+        }
+        const root = document.querySelector("#tiflux-widget-root");
+        const shadow = root?.shadowRoot;
+        if (!shadow) return false;
+        widgetRoot = root;
+        widgetShadow = shadow;
+        shadow.querySelector("#tiflux-transcription-unavailable")?.remove();
+
+        const sendButton = shadow.querySelector('button[aria-label="Enviar mensagem"]');
+        const editor = findEditor();
+        if (!sendButton || !editor) return false;
+        const composer = sendButton.parentElement;
+        if (!composer || composer.querySelector("#tiflux-record-audio")) return true;
+        composer.style.position = "relative";
+
+        const status = document.createElement("div");
+        status.id = "tiflux-transcription-status";
+        status.setAttribute("role", "status");
+        status.setAttribute("aria-live", "polite");
+        Object.assign(status.style, {
+          position: "absolute", right: "8px", bottom: "48px", zIndex: "20",
+          maxWidth: "min(340px, 80%)", padding: "6px 9px", borderRadius: "6px",
+          background: "#fff", color: "#5d5d5d", boxShadow: "0 1px 6px #0002",
+          font: "12px/1.4 Arial, sans-serif",
+        });
+        status.hidden = true;
+
+        const fileInput = document.createElement("input");
+        fileInput.id = "tiflux-audio-file";
+        fileInput.type = "file";
+        fileInput.accept = "audio/*,.mp3,.m4a,.wav,.webm,.ogg,.flac,.mpga";
+        fileInput.hidden = true;
+        fileInput.addEventListener("change", async () => {
+          const file = fileInput.files?.[0];
+          if (!file) return;
+          const supported = ["mp3", "m4a", "wav", "webm", "ogg", "flac", "mpga"];
+          const extension = file.name.split(".").pop()?.toLowerCase();
+          if (!file.type.startsWith("audio/") && !supported.includes(extension)) {
+            setStatus("Selecione um arquivo de áudio compatível.");
+            fileInput.value = "";
+            return;
+          }
+          setButtonState(false, true);
+          setStatus(`Transcrevendo ${file.name}…`);
+          try {
+            await transcribeAudio(file, file.name);
+          } catch (error) {
+            setStatus(error.message || "Falha ao transcrever o áudio.");
+          } finally {
+            setButtonState(false);
+            fileInput.value = "";
+          }
+        });
+
+        const makeButton = (id, label, right) => {
+          const button = document.createElement("button");
+          button.id = id;
+          button.type = "button";
+          button.innerHTML = label;
+          button.title = id === "tiflux-record-audio" ? "Gravar áudio" : "Enviar arquivo de áudio";
+          button.setAttribute("aria-label", button.title);
+          Object.assign(button.style, {
+            position: "absolute", right, bottom: "12px", zIndex: "11",
+            width: "30px", height: "30px", padding: "0", border: "0",
+            borderRadius: "4px", background: "white", color: "#5d5d5d",
+            font: "16px Arial, sans-serif", cursor: "pointer",
+          });
+          return button;
+        };
+
+        const recordButton = makeButton("tiflux-record-audio", MIC_ICON, "80px");
+        recordButton.addEventListener("click", async () => {
+          if (recorder?.state === "recording") {
+            recorder.stop();
+            setButtonState(false, true);
+            setStatus("Transcrevendo gravação…");
+            return;
+          }
+          if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+            setStatus("Este navegador não oferece suporte à gravação de áudio.");
+            return;
+          }
+          try {
+            recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            recordedChunks = [];
+            recordedBytes = 0;
+            const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]
+              .find((type) => MediaRecorder.isTypeSupported(type));
+            recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
+            recorder.addEventListener("dataavailable", (event) => {
+              if (!event.data.size) return;
+              recordedBytes += event.data.size;
+              if (recordedBytes > MAX_AUDIO_BYTES) {
+                setStatus("A gravação passou do limite de 20 MB e foi interrompida. Grave um trecho menor.");
+                setButtonState(false, true);
+                if (recorder.state === "recording") recorder.stop();
+                return;
+              }
+              recordedChunks.push(event.data);
+            });
+            recorder.addEventListener("stop", async () => {
+              recordingStream?.getTracks().forEach((track) => track.stop());
+              recordingStream = undefined;
+              try {
+                if (recordedBytes > MAX_AUDIO_BYTES) {
+                  throw new Error("A gravação excedeu o limite de 20 MB e não foi enviada. Grave um trecho menor.");
+                }
+                const blob = new Blob(recordedChunks, { type: recorder.mimeType || "audio/webm" });
+                await transcribeAudio(blob, "gravacao");
+              } catch (error) {
+                setStatus(error.message || "Falha ao transcrever a gravação.");
+              } finally {
+                setButtonState(false);
+              }
+            }, { once: true });
+            recorder.start(1000);
+            setButtonState(true);
+            setStatus("Gravando. Clique novamente para parar e transcrever.");
+          } catch (error) {
+            recordingStream?.getTracks().forEach((track) => track.stop());
+            recordingStream = undefined;
+            setStatus(error.name === "NotAllowedError"
+              ? "Permita o acesso ao microfone para gravar."
+              : (error.message || "Não foi possível iniciar a gravação."));
+          }
+        });
+
+        const fileButton = makeButton("tiflux-upload-audio", FILE_ICON, "115px");
+        fileButton.addEventListener("click", () => fileInput.click());
+        composer.append(status, fileInput, fileButton, recordButton);
+        return true;
+      };
+
+      const prepareTranscriptForWidgetSend = (event) => {
+        const clicked = event.target instanceof Element
+          ? event.target.closest('button[aria-label="Enviar mensagem"]')
+          : null;
+        if (!clicked || !pendingAudio) return;
+
+        const audio = pendingAudio;
+        audio.editorContainer.hidden = false;
+        audio.preview.remove();
+        pendingAudio = undefined;
+        audioHistory.push({ text: audio.text, url: audio.url });
+        setEditorValue(audio.text);
+        setStatus("");
+        renderHistoryAudio();
+      };
+
+      const checkTranscriptionRoute = async () => {
+        try {
+          const response = await fetch("/api/transcription/status", { cache: "no-store" });
+          transcriptionRouteAvailable = response.ok;
+        } catch {
+          transcriptionRouteAvailable = false;
+        }
+        setUpControls();
+      };
+
+      const connectToWidget = () => {
+        const root = document.querySelector("#tiflux-widget-root");
+        const shadow = root?.shadowRoot;
+        if (!shadow) return false;
+        widgetRoot = root;
+        widgetShadow = shadow;
+        if (!routeCheckStarted) {
+          routeCheckStarted = true;
+          checkTranscriptionRoute();
+        }
+        setUpControls();
+        if (sendCaptureShadow !== shadow) {
+          sendCaptureShadow = shadow;
+          shadow.addEventListener("click", prepareTranscriptForWidgetSend, true);
+        }
+        if (!widgetObserver) {
+          widgetObserver = new MutationObserver(() => {
+            setUpControls();
+            renderHistoryAudio();
+          });
+          widgetObserver.observe(shadow, { childList: true, subtree: true });
+        }
+        return true;
+      };
+
+      const widgetPoll = setInterval(() => {
+        if (connectToWidget()) clearInterval(widgetPoll);
+      }, 100);
+    })();
+  </script>
+</body>
+</html>
